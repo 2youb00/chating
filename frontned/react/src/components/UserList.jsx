@@ -14,7 +14,7 @@ function UserList({ currentUser, selectedUser, onSelectUser }) {
 
     // Setup socket for online status
     const token = localStorage.getItem("token")
-    const socket = io("http://localhost:3001", {
+    const socket = io("https://chating-kv0h.onrender.com", {
       auth: { token },
       transports: ["websocket", "polling"],
     })
@@ -47,7 +47,7 @@ function UserList({ currentUser, selectedUser, onSelectUser }) {
   const fetchUsers = async () => {
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch("http://localhost:3001/api/users", {
+      const response = await fetch("https://chating-kv0h.onrender.com/api/users", {
         headers: {
           Authorization: `Bearer ${token}`,
         },
