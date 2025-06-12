@@ -14,6 +14,7 @@ import { connectToDatabase } from "./config/database.js"
 
 const app = express()
 const server = http.createServer(app)
+
 const io = new Server(server, {
   cors: {
     origin: ["http://localhost:5173", "http://localhost:3000","https://chating-theta.vercel.app"],
@@ -40,7 +41,6 @@ app.get("/health", (req, res) => {
     status: "OK",
     message: "ChatConnect server is running",
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
   })
 })
 
@@ -50,34 +50,56 @@ app.use("/api/messages", messageRoutes)
 
 io.use(socketAuth)
 
-const connectedUsers = new Map()
-const userTyping = new Map()
+const connectedUsers = new Map() // userId -> socketId
+const userSockets = new Map() // socketId -> userId
 
 io.on("connection", (socket) => {
+  console.log(`Socket connected: ${socket.id}`)
+
   socket.on("join", (userId) => {
+    // Clean up any existing connections for this user
+    const existingSocketId = connectedUsers.get(userId)
+    if (existingSocketId && existingSocketId !== socket.id) {
+      const existingSocket = io.sockets.sockets.get(existingSocketId)
+      if (existingSocket) {
+        existingSocket.disconnect()
+      }
+    }
+
+    // Store new connection
     connectedUsers.set(userId, socket.id)
+    userSockets.set(socket.id, userId)
     socket.userId = userId
     socket.join(`user_${userId}`)
 
-    // Broadcast user online status to all connected users
-    io.emit("userOnline", userId)
+    console.log(`User ${userId} joined with socket ${socket.id}`)
+
+    // Broadcast user online status
+    socket.broadcast.emit("userOnline", userId)
 
     // Send current online users to the newly connected user
     const onlineUsers = Array.from(connectedUsers.keys())
     socket.emit("onlineUsers", onlineUsers)
-
-    // Send online users to all other connected users
-    socket.broadcast.emit("onlineUsers", onlineUsers)
   })
 
   socket.on("sendMessage", (messageData) => {
+    // Validate message data
+    if (!messageData.receiver || !messageData.sender) {
+      console.log("Invalid message data:", messageData)
+      return
+    }
+
     const receiverSocketId = connectedUsers.get(messageData.receiver)
     if (receiverSocketId) {
+      // Send only to the specific receiver
       io.to(receiverSocketId).emit("newMessage", messageData)
+      console.log(`Message sent from ${messageData.sender} to ${messageData.receiver}`)
     }
   })
 
   socket.on("messageRead", (data) => {
+    if (!data.senderId) return
+
     const senderSocketId = connectedUsers.get(data.senderId)
     if (senderSocketId) {
       io.to(senderSocketId).emit("messageRead", {
@@ -88,9 +110,10 @@ io.on("connection", (socket) => {
   })
 
   socket.on("typing", (data) => {
+    if (!data.receiverId) return
+
     const receiverSocketId = connectedUsers.get(data.receiverId)
     if (receiverSocketId) {
-      userTyping.set(data.senderId, data.receiverId)
       io.to(receiverSocketId).emit("userTyping", {
         userId: data.senderId,
         isTyping: true,
@@ -99,9 +122,10 @@ io.on("connection", (socket) => {
   })
 
   socket.on("stopTyping", (data) => {
+    if (!data.receiverId) return
+
     const receiverSocketId = connectedUsers.get(data.receiverId)
     if (receiverSocketId) {
-      userTyping.delete(data.senderId)
       io.to(receiverSocketId).emit("userTyping", {
         userId: data.senderId,
         isTyping: false,
@@ -109,23 +133,31 @@ io.on("connection", (socket) => {
     }
   })
 
-  socket.on("disconnect", () => {
-    if (socket.userId) {
-      connectedUsers.delete(socket.userId)
-      userTyping.delete(socket.userId)
+  socket.on("disconnect", (reason) => {
+    const userId = userSockets.get(socket.id)
+    if (userId) {
+      console.log(`User ${userId} disconnected: ${reason}`)
 
-      // Broadcast user offline status to all connected users
-      io.emit("userOffline", socket.userId)
+      // Clean up user mappings
+      connectedUsers.delete(userId)
+      userSockets.delete(socket.id)
 
-      // Send updated online users list to all connected users
+      // Broadcast user offline status
+      socket.broadcast.emit("userOffline", userId)
+
+      // Send updated online users list
       const onlineUsers = Array.from(connectedUsers.keys())
-      io.emit("onlineUsers", onlineUsers)
+      socket.broadcast.emit("onlineUsers", onlineUsers)
     }
+  })
+
+  // Handle connection errors
+  socket.on("error", (error) => {
+    console.error("Socket error:", error)
   })
 })
 
 app.use((err, req, res, next) => {
-  console.error("Server error:", err)
   res.status(500).json({ message: "Something went wrong!" })
 })
 
@@ -137,10 +169,7 @@ const PORT = process.env.PORT || 3001
 
 async function startServer() {
   try {
-    // Try to connect to the database
     await connectToDatabase()
-
-    // If connection successful, start the server
     server.listen(PORT, () => {
       console.log(`🚀 ChatConnect Server running on port ${PORT}`)
       console.log(`💬 Socket.IO ready for real-time messaging`)
@@ -151,28 +180,10 @@ async function startServer() {
   }
 }
 
-// Add more graceful error handling
-startServer().catch((err) => {
-  console.error("Fatal error during server startup:", err)
-  process.exit(1)
-})
+startServer()
 
 process.on("SIGINT", async () => {
   console.log("\n👋 Shutting down server...")
   io.close()
-  server.close(() => {
-    process.exit(0)
-  })
-})
-
-// Handle uncaught exceptions
-process.on("uncaughtException", (err) => {
-  console.error("Uncaught Exception:", err)
-  // Keep the process running, but log the error
-})
-
-// Handle unhandled promise rejections
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("Unhandled Rejection at:", promise, "reason:", reason)
-  // Keep the process running, but log the error
+  server.close(() => process.exit(0))
 })
