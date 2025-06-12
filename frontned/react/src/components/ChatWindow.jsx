@@ -14,6 +14,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
   const [userOnlineStatus, setUserOnlineStatus] = useState(selectedUser?.isOnline || false)
   const messagesEndRef = useRef(null)
   const typingTimeoutRef = useRef(null)
+  const currentChatRef = useRef(null) // Track current chat
 
   useEffect(() => {
     const token = localStorage.getItem("token")
@@ -31,21 +32,33 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
     newSocket.on("disconnect", () => setIsConnected(false))
 
+    // Only handle messages for current conversation
     newSocket.on("newMessage", (message) => {
-      setMessages((prev) => [...prev, message])
-      if (message.sender === selectedUser._id) {
-        markMessageAsRead(message._id, message.sender)
+      // Only add message if it's for the current conversation
+      if (
+        currentChatRef.current === selectedUser._id &&
+        ((message.sender === selectedUser._id && message.receiver === currentUser._id) ||
+          (message.sender === currentUser._id && message.receiver === selectedUser._id))
+      ) {
+        setMessages((prev) => [...prev, message])
+        if (message.sender === selectedUser._id) {
+          markMessageAsRead(message._id, message.sender)
+        }
       }
     })
 
     newSocket.on("messageRead", (data) => {
-      setMessages((prev) =>
-        prev.map((msg) => (msg._id === data.messageId ? { ...msg, isRead: true, readBy: data.readBy } : msg)),
-      )
+      // Only update read status for current conversation
+      if (currentChatRef.current === selectedUser._id) {
+        setMessages((prev) =>
+          prev.map((msg) => (msg._id === data.messageId ? { ...msg, isRead: true, readBy: data.readBy } : msg)),
+        )
+      }
     })
 
     newSocket.on("userTyping", (data) => {
-      if (data.userId === selectedUser._id) {
+      // Only show typing for current conversation
+      if (data.userId === selectedUser._id && currentChatRef.current === selectedUser._id) {
         setIsTyping(data.isTyping)
       }
     })
@@ -73,11 +86,15 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
     setSocket(newSocket)
     return () => newSocket.close()
-  }, [currentUser._id, selectedUser._id])
+  }, [currentUser._id]) // Remove selectedUser._id from dependencies
 
   useEffect(() => {
     if (selectedUser) {
+      // Update current chat reference
+      currentChatRef.current = selectedUser._id
+
       setUserOnlineStatus(selectedUser.isOnline || false)
+      setIsTyping(false) // Reset typing when switching chats
       fetchMessages()
     }
   }, [selectedUser])
@@ -116,13 +133,16 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
       if (response.ok) {
         const data = await response.json()
-        setMessages(data.messages)
+        // Only set messages if this is still the current chat
+        if (currentChatRef.current === selectedUser._id) {
+          setMessages(data.messages)
 
-        data.messages.forEach((message) => {
-          if (message.sender === selectedUser._id && !message.isRead) {
-            markMessageAsRead(message._id, message.sender)
-          }
-        })
+          data.messages.forEach((message) => {
+            if (message.sender === selectedUser._id && !message.isRead) {
+              markMessageAsRead(message._id, message.sender)
+            }
+          })
+        }
       }
     } catch (error) {
       // Silent error handling
@@ -176,20 +196,27 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
       if (response.ok) {
         const data = await response.json()
 
-        // Replace temp message with real message
-        setMessages((prev) => prev.map((msg) => (msg._id === tempMessage._id ? data.message : msg)))
+        // Only update if this is still the current chat
+        if (currentChatRef.current === selectedUser._id) {
+          // Replace temp message with real message
+          setMessages((prev) => prev.map((msg) => (msg._id === tempMessage._id ? data.message : msg)))
+        }
 
         // Send to other user via socket
         socket.emit("sendMessage", data.message)
       } else {
-        // Remove temp message on error
-        setMessages((prev) => prev.filter((msg) => msg._id !== tempMessage._id))
-        setNewMessage(messageContent) // Restore message
+        // Remove temp message on error (only if still current chat)
+        if (currentChatRef.current === selectedUser._id) {
+          setMessages((prev) => prev.filter((msg) => msg._id !== tempMessage._id))
+          setNewMessage(messageContent)
+        }
       }
     } catch (error) {
-      // Remove temp message on error
-      setMessages((prev) => prev.filter((msg) => msg._id !== tempMessage._id))
-      setNewMessage(messageContent) // Restore message
+      // Remove temp message on error (only if still current chat)
+      if (currentChatRef.current === selectedUser._id) {
+        setMessages((prev) => prev.filter((msg) => msg._id !== tempMessage._id))
+        setNewMessage(messageContent)
+      }
     }
   }
 
