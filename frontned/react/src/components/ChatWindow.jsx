@@ -19,7 +19,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
     const token = localStorage.getItem("token")
     if (!token) return
 
-    const newSocket = io("https://chating-kv0h.onrender.com", {
+    const newSocket = io("http://localhost:3001", {
       auth: { token },
       transports: ["websocket", "polling"],
     })
@@ -29,14 +29,10 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
       newSocket.emit("join", currentUser._id)
     })
 
-    newSocket.on("disconnect", () => {
-      setIsConnected(false)
-    })
+    newSocket.on("disconnect", () => setIsConnected(false))
 
     newSocket.on("newMessage", (message) => {
       setMessages((prev) => [...prev, message])
-
-      // Mark message as read immediately if user is viewing the chat
       if (message.sender === selectedUser._id) {
         markMessageAsRead(message._id, message.sender)
       }
@@ -76,10 +72,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
     })
 
     setSocket(newSocket)
-
-    return () => {
-      newSocket.close()
-    }
+    return () => newSocket.close()
   }, [currentUser._id, selectedUser._id])
 
   useEffect(() => {
@@ -90,7 +83,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
   }, [selectedUser])
 
   useEffect(() => {
-    scrollToBottom()
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
 
   const markMessageAsRead = async (messageId, senderId) => {
@@ -102,14 +95,11 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
       })
     }
 
-    // Also update in database
     try {
       const token = localStorage.getItem("token")
-      await fetch(`https://chating-kv0h.onrender.com/api/messages/${messageId}/read`, {
+      await fetch(`http://localhost:3001/api/messages/${messageId}/read`, {
         method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       })
     } catch (error) {
       // Silent error handling
@@ -120,17 +110,14 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
     setIsLoading(true)
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch(`https://chating-kv0h.onrender.com/api/messages/${selectedUser._id}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+      const response = await fetch(`http://localhost:3001/api/messages/${selectedUser._id}`, {
+        headers: { Authorization: `Bearer ${token}` },
       })
 
       if (response.ok) {
         const data = await response.json()
         setMessages(data.messages)
 
-        // Mark unread messages from the selected user as read
         data.messages.forEach((message) => {
           if (message.sender === selectedUser._id && !message.isRead) {
             markMessageAsRead(message._id, message.sender)
@@ -148,37 +135,61 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
     e.preventDefault()
     if (!newMessage.trim() || !socket || !isConnected) return
 
-    const messageData = {
+    const tempMessage = {
+      _id: `temp_${Date.now()}`,
       sender: currentUser._id,
       receiver: selectedUser._id,
       content: newMessage.trim(),
+      timestamp: new Date(),
+      isRead: false,
+      isTemp: true,
+    }
+
+    // Add message instantly to UI
+    setMessages((prev) => [...prev, tempMessage])
+    const messageContent = newMessage.trim()
+    setNewMessage("")
+
+    // Stop typing
+    if (socket) {
+      socket.emit("stopTyping", {
+        senderId: currentUser._id,
+        receiverId: selectedUser._id,
+      })
     }
 
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch("https://chating-kv0h.onrender.com/api/messages", {
+      const response = await fetch("http://localhost:3001/api/messages", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(messageData),
+        body: JSON.stringify({
+          sender: currentUser._id,
+          receiver: selectedUser._id,
+          content: messageContent,
+        }),
       })
 
       if (response.ok) {
         const data = await response.json()
-        setMessages((prev) => [...prev, data.message])
-        socket.emit("sendMessage", data.message)
-        setNewMessage("")
 
-        // Stop typing when message is sent
-        socket.emit("stopTyping", {
-          senderId: currentUser._id,
-          receiverId: selectedUser._id,
-        })
+        // Replace temp message with real message
+        setMessages((prev) => prev.map((msg) => (msg._id === tempMessage._id ? data.message : msg)))
+
+        // Send to other user via socket
+        socket.emit("sendMessage", data.message)
+      } else {
+        // Remove temp message on error
+        setMessages((prev) => prev.filter((msg) => msg._id !== tempMessage._id))
+        setNewMessage(messageContent) // Restore message
       }
     } catch (error) {
-      // Silent error handling
+      // Remove temp message on error
+      setMessages((prev) => prev.filter((msg) => msg._id !== tempMessage._id))
+      setNewMessage(messageContent) // Restore message
     }
   }
 
@@ -204,10 +215,6 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
     }
   }
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }
-
   const getInitials = (name) => {
     return name
       .split(" ")
@@ -226,6 +233,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
   return (
     <div className="h-full flex flex-col">
+      {/* Header */}
       <div className="bg-white border-b border-gray-200 p-3 md:p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -245,12 +253,11 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
               </p>
             </div>
           </div>
-          <div className="flex items-center">
-            <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"}`}></div>
-          </div>
+          <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"}`}></div>
         </div>
       </div>
 
+      {/* Messages */}
       <div className="flex-1 overflow-y-auto p-3 md:p-4">
         {isLoading ? (
           <div className="flex justify-center py-8">
@@ -271,7 +278,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
                   <div
                     className={`max-w-[75%] md:max-w-xs lg:max-w-md px-3 py-2 md:px-4 md:py-2 rounded-lg ${
                       message.sender === currentUser._id ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-900"
-                    }`}
+                    } ${message.isTemp ? "opacity-70" : ""}`}
                   >
                     <p className="text-sm break-words">{message.content}</p>
                     <div className="flex items-center justify-between mt-1">
@@ -280,7 +287,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
                       >
                         {formatTime(message.timestamp)}
                       </p>
-                      {message.sender === currentUser._id && (
+                      {message.sender === currentUser._id && !message.isTemp && (
                         <div className="ml-2">
                           {message.isRead ? (
                             <CheckCheck className="h-3 w-3 text-blue-200" />
@@ -299,6 +306,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
         )}
       </div>
 
+      {/* Input */}
       <div className="bg-white border-t border-gray-200 p-3 md:p-4">
         <form onSubmit={sendMessage} className="flex space-x-2">
           <input
