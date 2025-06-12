@@ -10,7 +10,7 @@ export const authenticateToken = (req, res, next) => {
 
   jwt.verify(token, process.env.JWT_SECRET || "your-secret-key", (err, user) => {
     if (err) {
-      return res.status(403).json({ message: "Invalid token" })
+      return res.status(403).json({ message: "Invalid or expired token" })
     }
     req.user = user
     next()
@@ -19,8 +19,9 @@ export const authenticateToken = (req, res, next) => {
 
 export const socketAuth = (socket, next) => {
   const token = socket.handshake.auth.token
+
   if (!token) {
-    return next(new Error("No token"))
+    return next(new Error("Authentication error"))
   }
 
   try {
@@ -28,6 +29,6 @@ export const socketAuth = (socket, next) => {
     socket.userId = decoded.userId
     next()
   } catch (err) {
-    next(new Error("Invalid token"))
+    next(new Error("Authentication error"))
   }
 }
