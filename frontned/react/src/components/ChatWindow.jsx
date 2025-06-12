@@ -10,130 +10,178 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
   const [isLoading, setIsLoading] = useState(true)
   const [socket, setSocket] = useState(null)
   const [isConnected, setIsConnected] = useState(false)
+  const [connectionAttempts, setConnectionAttempts] = useState(0)
   const [isTyping, setIsTyping] = useState(false)
   const [userOnlineStatus, setUserOnlineStatus] = useState(selectedUser?.isOnline || false)
   const messagesEndRef = useRef(null)
   const typingTimeoutRef = useRef(null)
   const currentChatRef = useRef(null)
   const socketInitialized = useRef(false)
+  const reconnectTimeoutRef = useRef(null)
 
-  // Initialize socket only once per component lifecycle
+  // Initialize socket with retry logic
   useEffect(() => {
     if (socketInitialized.current) return
 
-    const token = localStorage.getItem("token")
-    if (!token) return
+    const initializeSocket = () => {
+      const token = localStorage.getItem("token")
+      if (!token) {
+        console.error("No token found")
+        return
+      }
 
-    const newSocket = io("http://localhost:3001", {
-      auth: { token },
-      transports: ["websocket", "polling"],
-      forceNew: true, // Force new connection to prevent conflicts
-    })
+      console.log("Initializing socket connection...")
 
-    newSocket.on("connect", () => {
-      setIsConnected(true)
-      // Only emit join once when socket connects
-      newSocket.emit("join", currentUser._id)
-    })
+      const newSocket = io("http://localhost:3001", {
+        auth: { token },
+        transports: ["websocket", "polling"],
+        forceNew: true,
+        timeout: 10000,
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+      })
 
-    newSocket.on("disconnect", () => {
-      setIsConnected(false)
-    })
+      newSocket.on("connect", () => {
+        console.log("Socket connected successfully")
+        setIsConnected(true)
+        setConnectionAttempts(0)
 
-    // Message events with strict filtering
-    newSocket.on("newMessage", (message) => {
-      // Triple check: current chat, message participants, and component mounted
-      const currentChat = currentChatRef.current
-      if (
-        currentChat &&
-        currentChat === selectedUser?._id &&
-        ((message.sender === currentChat && message.receiver === currentUser._id) ||
-          (message.sender === currentUser._id && message.receiver === currentChat))
-      ) {
-        setMessages((prev) => {
-          // Prevent duplicate messages
-          const exists = prev.some((msg) => msg._id === message._id)
-          if (exists) return prev
-          return [...prev, message]
-        })
+        // Join user room immediately
+        newSocket.emit("join", currentUser._id)
+        console.log(`User ${currentUser._id} joined`)
+      })
 
-        if (message.sender === currentChat) {
-          markMessageAsRead(message._id, message.sender)
+      newSocket.on("connect_error", (error) => {
+        console.error("Socket connection error:", error)
+        setIsConnected(false)
+        setConnectionAttempts((prev) => prev + 1)
+
+        // Retry connection for new users
+        if (connectionAttempts < 3) {
+          reconnectTimeoutRef.current = setTimeout(() => {
+            console.log(`Retrying connection... Attempt ${connectionAttempts + 1}`)
+            newSocket.connect()
+          }, 2000)
         }
-      }
-    })
+      })
 
-    newSocket.on("messageRead", (data) => {
-      const currentChat = currentChatRef.current
-      if (currentChat && currentChat === selectedUser?._id) {
-        setMessages((prev) =>
-          prev.map((msg) => (msg._id === data.messageId ? { ...msg, isRead: true, readBy: data.readBy } : msg)),
-        )
-      }
-    })
+      newSocket.on("disconnect", (reason) => {
+        console.log("Socket disconnected:", reason)
+        setIsConnected(false)
 
-    newSocket.on("userTyping", (data) => {
-      const currentChat = currentChatRef.current
-      if (data.userId === currentChat && currentChat === selectedUser?._id) {
-        setIsTyping(data.isTyping)
-      }
-    })
+        // Auto-reconnect for new users
+        if (reason === "io server disconnect" || reason === "transport close") {
+          setTimeout(() => {
+            console.log("Attempting to reconnect...")
+            newSocket.connect()
+          }, 1000)
+        }
+      })
 
-    newSocket.on("userOnline", (userId) => {
-      if (userId === selectedUser?._id) {
-        setUserOnlineStatus(true)
-        onUserStatusChange?.(userId, true)
-      }
-    })
+      newSocket.on("reconnect", () => {
+        console.log("Socket reconnected")
+        setIsConnected(true)
+        newSocket.emit("join", currentUser._id)
+      })
 
-    newSocket.on("userOffline", (userId) => {
-      if (userId === selectedUser?._id) {
-        setUserOnlineStatus(false)
-        setIsTyping(false)
-        onUserStatusChange?.(userId, false)
-      }
-    })
+      // Message events with strict filtering
+      newSocket.on("newMessage", (message) => {
+        const currentChat = currentChatRef.current
+        if (
+          currentChat &&
+          currentChat === selectedUser?._id &&
+          ((message.sender === currentChat && message.receiver === currentUser._id) ||
+            (message.sender === currentUser._id && message.receiver === currentChat))
+        ) {
+          setMessages((prev) => {
+            const exists = prev.some((msg) => msg._id === message._id)
+            if (exists) return prev
+            return [...prev, message]
+          })
 
-    newSocket.on("onlineUsers", (userIds) => {
-      if (selectedUser?._id) {
-        const isOnline = userIds.includes(selectedUser._id)
-        setUserOnlineStatus(isOnline)
-        onUserStatusChange?.(selectedUser._id, isOnline)
-      }
-    })
+          if (message.sender === currentChat) {
+            markMessageAsRead(message._id, message.sender)
+          }
+        }
+      })
 
-    setSocket(newSocket)
-    socketInitialized.current = true
+      newSocket.on("messageRead", (data) => {
+        const currentChat = currentChatRef.current
+        if (currentChat && currentChat === selectedUser?._id) {
+          setMessages((prev) =>
+            prev.map((msg) => (msg._id === data.messageId ? { ...msg, isRead: true, readBy: data.readBy } : msg)),
+          )
+        }
+      })
+
+      newSocket.on("userTyping", (data) => {
+        const currentChat = currentChatRef.current
+        if (data.userId === currentChat && currentChat === selectedUser?._id) {
+          setIsTyping(data.isTyping)
+        }
+      })
+
+      newSocket.on("userOnline", (userId) => {
+        if (userId === selectedUser?._id) {
+          setUserOnlineStatus(true)
+          onUserStatusChange?.(userId, true)
+        }
+      })
+
+      newSocket.on("userOffline", (userId) => {
+        if (userId === selectedUser?._id) {
+          setUserOnlineStatus(false)
+          setIsTyping(false)
+          onUserStatusChange?.(userId, false)
+        }
+      })
+
+      newSocket.on("onlineUsers", (userIds) => {
+        if (selectedUser?._id) {
+          const isOnline = userIds.includes(selectedUser._id)
+          setUserOnlineStatus(isOnline)
+          onUserStatusChange?.(selectedUser._id, isOnline)
+        }
+      })
+
+      setSocket(newSocket)
+      socketInitialized.current = true
+
+      return newSocket
+    }
+
+    const socket = initializeSocket()
 
     return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+      }
       socketInitialized.current = false
-      newSocket.close()
+      if (socket) {
+        socket.close()
+      }
     }
-  }, [currentUser._id])
+  }, [currentUser._id, connectionAttempts, selectedUser?._id])
 
   // Handle chat switching
   useEffect(() => {
     if (selectedUser) {
-      // Clear previous chat state
       setMessages([])
       setIsTyping(false)
       setIsLoading(true)
-
-      // Update current chat reference
       currentChatRef.current = selectedUser._id
       setUserOnlineStatus(selectedUser.isOnline || false)
-
-      // Fetch messages for new chat
       fetchMessages()
     }
-  }, [selectedUser?._id]) // Only depend on selectedUser._id
+  }, [selectedUser?._id])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
 
   const markMessageAsRead = async (messageId, senderId) => {
-    if (socket && currentChatRef.current === selectedUser._id) {
+    if (socket && socket.connected && currentChatRef.current === selectedUser._id) {
       socket.emit("messageRead", {
         messageId: messageId,
         senderId: senderId,
@@ -148,7 +196,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
         headers: { Authorization: `Bearer ${token}` },
       })
     } catch (error) {
-      // Silent error handling
+      console.error("Error marking message as read:", error)
     }
   }
 
@@ -166,22 +214,21 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
       if (response.ok) {
         const data = await response.json()
-        // Only set messages if this is still the current chat
         if (currentChatRef.current === chatId) {
           setMessages(data.messages)
 
-          // Mark unread messages as read
           data.messages.forEach((message) => {
             if (message.sender === chatId && !message.isRead) {
               markMessageAsRead(message._id, message.sender)
             }
           })
         }
+      } else {
+        console.error("Failed to fetch messages:", response.status)
       }
     } catch (error) {
-      // Silent error handling
+      console.error("Error fetching messages:", error)
     } finally {
-      // Only update loading state if still current chat
       if (currentChatRef.current === chatId) {
         setIsLoading(false)
       }
@@ -190,8 +237,9 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
   const sendMessage = async (e) => {
     e.preventDefault()
-    if (!newMessage.trim() || !socket || !isConnected || !selectedUser) return
+    if (!newMessage.trim() || !selectedUser) return
 
+    // Allow sending even if socket is not connected (will retry)
     const chatId = selectedUser._id
     const tempMessage = {
       _id: `temp_${Date.now()}_${currentUser._id}`,
@@ -203,16 +251,17 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
       isTemp: true,
     }
 
-    // Add message instantly to UI
     setMessages((prev) => [...prev, tempMessage])
     const messageContent = newMessage.trim()
     setNewMessage("")
 
     // Stop typing
-    socket.emit("stopTyping", {
-      senderId: currentUser._id,
-      receiverId: chatId,
-    })
+    if (socket && socket.connected) {
+      socket.emit("stopTyping", {
+        senderId: currentUser._id,
+        receiverId: chatId,
+      })
+    }
 
     try {
       const token = localStorage.getItem("token")
@@ -232,22 +281,25 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
       if (response.ok) {
         const data = await response.json()
 
-        // Only update if this is still the current chat
         if (currentChatRef.current === chatId) {
           setMessages((prev) => prev.map((msg) => (msg._id === tempMessage._id ? data.message : msg)))
         }
 
-        // Send to other user via socket
-        socket.emit("sendMessage", data.message)
+        // Send via socket if connected, otherwise message is still saved
+        if (socket && socket.connected) {
+          socket.emit("sendMessage", data.message)
+        } else {
+          console.log("Message saved but socket not connected - will sync when reconnected")
+        }
       } else {
-        // Remove temp message on error (only if still current chat)
+        console.error("Failed to send message:", response.status)
         if (currentChatRef.current === chatId) {
           setMessages((prev) => prev.filter((msg) => msg._id !== tempMessage._id))
           setNewMessage(messageContent)
         }
       }
     } catch (error) {
-      // Remove temp message on error (only if still current chat)
+      console.error("Error sending message:", error)
       if (currentChatRef.current === chatId) {
         setMessages((prev) => prev.filter((msg) => msg._id !== tempMessage._id))
         setNewMessage(messageContent)
@@ -258,7 +310,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
   const handleTyping = (e) => {
     setNewMessage(e.target.value)
 
-    if (socket && e.target.value.trim() && selectedUser) {
+    if (socket && socket.connected && e.target.value.trim() && selectedUser) {
       socket.emit("typing", {
         senderId: currentUser._id,
         receiverId: selectedUser._id,
@@ -269,10 +321,12 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
       }
 
       typingTimeoutRef.current = setTimeout(() => {
-        socket.emit("stopTyping", {
-          senderId: currentUser._id,
-          receiverId: selectedUser._id,
-        })
+        if (socket && socket.connected) {
+          socket.emit("stopTyping", {
+            senderId: currentUser._id,
+            receiverId: selectedUser._id,
+          })
+        }
       }, 2000)
     }
   }
@@ -317,7 +371,10 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
               </p>
             </div>
           </div>
-          <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"}`}></div>
+          <div className="flex items-center space-x-2">
+            <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500" : "bg-yellow-500"}`}></div>
+            {!isConnected && connectionAttempts > 0 && <span className="text-xs text-yellow-600">Connecting...</span>}
+          </div>
         </div>
       </div>
 
@@ -379,16 +436,18 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
             onChange={handleTyping}
             placeholder={`Message ${selectedUser.name}...`}
             className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            disabled={!isConnected}
           />
           <button
             type="submit"
-            disabled={!newMessage.trim() || !isConnected}
+            disabled={!newMessage.trim()}
             className="px-3 py-2 md:px-4 md:py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
           >
             <Send className="h-4 w-4" />
           </button>
         </form>
+        {!isConnected && (
+          <p className="text-xs text-yellow-600 mt-1">Messages will be saved and sent when connection is restored</p>
+        )}
       </div>
     </div>
   )
