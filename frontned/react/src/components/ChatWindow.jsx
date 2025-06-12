@@ -24,7 +24,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
     const token = localStorage.getItem("token")
     if (!token) return
 
-    const newSocket = io("http://localhost:3001", {
+    const newSocket = io("https://chating-kv0h.onrender.com", {
       auth: { token },
       transports: ["websocket", "polling"],
       forceNew: true, // Force new connection to prevent conflicts
@@ -143,7 +143,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
     try {
       const token = localStorage.getItem("token")
-      await fetch(`http://localhost:3001/api/messages/${messageId}/read`, {
+      await fetch(`https://chating-kv0h.onrender.com/api/messages/${messageId}/read`, {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -160,7 +160,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch(`http://localhost:3001/api/messages/${chatId}`, {
+      const response = await fetch(`https://chating-kv0h.onrender.com/api/messages/${chatId}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
 
@@ -216,7 +216,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
     try {
       const token = localStorage.getItem("token")
-      const response = await fetch("http://localhost:3001/api/messages", {
+      const response = await fetch("https://chating-kv0h.onrender.com/api/messages", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
