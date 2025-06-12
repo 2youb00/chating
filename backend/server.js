@@ -24,10 +24,15 @@ const io = new Server(server, {
 
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://localhost:3000"],
+    origin: [
+      "http://localhost:5173",
+      "http://localhost:3000",
+      "https://chating-theta.vercel.app"
+    ],
     credentials: true,
   }),
 )
+
 app.use(express.json())
 
 app.get("/health", (req, res) => {
