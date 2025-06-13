@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "server": "node backend/server.js",
     "dev:server": "nodemon backend/server.js",
+    "dev:frontend": "vite",
     "dev:all": "node scripts/start-all.js",
     "start": "concurrently \"npm run server\" \"npm run preview\"",
     "check": "node scripts/check-setup.js",
@@ -18,33 +19,34 @@
     "install:deps": "node scripts/install-deps.js"
   },
   "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "express": "^4.21.2",
-    "jsonwebtoken": "^9.0.2",
-    "lucide-react": "^0.263.1",
-    "mongodb": "^6.3.0",
-    "path-to-regexp": "^6.3.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.20.1",
+    "socket.io-client": "^4.7.4",
+    "lucide-react": "^0.263.1",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.3.0",
     "socket.io": "^4.7.4",
-    "socket.io-client": "^4.7.4"
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "path-to-regexp": "^6.2.1",
+    "react-canvas-draw": "^1.2.1"
   },
   "devDependencies": {
     "@types/react": "^18.2.15",
     "@types/react-dom": "^18.2.7",
     "@vitejs/plugin-react": "^4.0.3",
     "autoprefixer": "^10.4.14",
-    "concurrently": "^8.2.2",
     "eslint": "^8.45.0",
     "eslint-plugin-react": "^7.32.2",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.3",
-    "nodemon": "^3.0.1",
     "postcss": "^8.4.27",
     "tailwindcss": "^3.3.3",
-    "vite": "^4.4.5"
+    "vite": "^4.4.5",
+    "nodemon": "^3.0.1",
+    "concurrently": "^8.2.2"
   }
 }

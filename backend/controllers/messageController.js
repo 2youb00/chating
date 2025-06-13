@@ -4,18 +4,17 @@ import { ObjectId } from "mongodb"
 class MessageController {
   static async sendMessage(req, res) {
     try {
-      const { sender, receiver, content } = req.body
+      const { sender, receiver, content, type } = req.body
 
       if (!sender || !receiver || !content) {
         return res.status(400).json({ message: "Sender, receiver, and content are required" })
       }
 
-      // Validate ObjectId format
       if (!ObjectId.isValid(sender) || !ObjectId.isValid(receiver)) {
         return res.status(400).json({ message: "Invalid user ID format" })
       }
 
-      const message = await Message.create({ sender, receiver, content })
+      const message = await Message.create({ sender, receiver, content, type })
 
       res.status(201).json({
         message: "Message sent successfully",
@@ -33,8 +32,6 @@ class MessageController {
       const currentUserId = req.user.userId
 
       const messages = await Message.findConversation(currentUserId, userId)
-
-      // Mark all unread messages from the other user as read
       await Message.markConversationAsRead(userId, currentUserId)
 
       res.json({ messages })
@@ -50,7 +47,6 @@ class MessageController {
       const readBy = req.user.userId
 
       await Message.markAsRead(new ObjectId(messageId), readBy)
-
       res.json({ message: "Message marked as read" })
     } catch (error) {
       console.error("Mark message as read error:", error)

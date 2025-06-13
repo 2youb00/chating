@@ -9,6 +9,7 @@ class Message {
       sender: new ObjectId(messageData.sender),
       receiver: new ObjectId(messageData.receiver),
       content: messageData.content,
+      type: messageData.type || "text", // Add message type
       timestamp: new Date(),
       isRead: false,
       readAt: null,

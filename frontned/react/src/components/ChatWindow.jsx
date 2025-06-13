@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useState, useRef } from "react"
-import { Send, Check, CheckCheck } from "lucide-react"
+import { Send, Check, CheckCheck, Palette } from "lucide-react"
 import { io } from "socket.io-client"
+import DrawingCanvas from "./DrawingCanvas"
 
 function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
   const [messages, setMessages] = useState([])
@@ -12,6 +13,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
   const [isConnected, setIsConnected] = useState(false)
   const [isTyping, setIsTyping] = useState(false)
   const [userOnlineStatus, setUserOnlineStatus] = useState(selectedUser?.isOnline || false)
+  const [showDrawing, setShowDrawing] = useState(false)
   const messagesEndRef = useRef(null)
   const typingTimeoutRef = useRef(null)
   const currentChatRef = useRef(null)
@@ -27,12 +29,11 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
     const newSocket = io("https://chating-kv0h.onrender.com", {
       auth: { token },
       transports: ["websocket", "polling"],
-      forceNew: true, // Force new connection to prevent conflicts
+      forceNew: true,
     })
 
     newSocket.on("connect", () => {
       setIsConnected(true)
-      // Only emit join once when socket connects
       newSocket.emit("join", currentUser._id)
     })
 
@@ -40,9 +41,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
       setIsConnected(false)
     })
 
-    // Message events with strict filtering
     newSocket.on("newMessage", (message) => {
-      // Triple check: current chat, message participants, and component mounted
       const currentChat = currentChatRef.current
       if (
         currentChat &&
@@ -51,7 +50,6 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
           (message.sender === currentUser._id && message.receiver === currentChat))
       ) {
         setMessages((prev) => {
-          // Prevent duplicate messages
           const exists = prev.some((msg) => msg._id === message._id)
           if (exists) return prev
           return [...prev, message]
@@ -111,22 +109,16 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
     }
   }, [currentUser._id])
 
-  // Handle chat switching
   useEffect(() => {
     if (selectedUser) {
-      // Clear previous chat state
       setMessages([])
       setIsTyping(false)
       setIsLoading(true)
-
-      // Update current chat reference
       currentChatRef.current = selectedUser._id
       setUserOnlineStatus(selectedUser.isOnline || false)
-
-      // Fetch messages for new chat
       fetchMessages()
     }
-  }, [selectedUser?._id]) // Only depend on selectedUser._id
+  }, [selectedUser])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -166,11 +158,9 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
       if (response.ok) {
         const data = await response.json()
-        // Only set messages if this is still the current chat
         if (currentChatRef.current === chatId) {
           setMessages(data.messages)
 
-          // Mark unread messages as read
           data.messages.forEach((message) => {
             if (message.sender === chatId && !message.isRead) {
               markMessageAsRead(message._id, message.sender)
@@ -181,38 +171,35 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
     } catch (error) {
       // Silent error handling
     } finally {
-      // Only update loading state if still current chat
       if (currentChatRef.current === chatId) {
         setIsLoading(false)
       }
     }
   }
 
-  const sendMessage = async (e) => {
-    e.preventDefault()
-    if (!newMessage.trim() || !socket || !isConnected || !selectedUser) return
+  const sendMessage = async (content, type = "text") => {
+    if (!selectedUser) return
 
     const chatId = selectedUser._id
     const tempMessage = {
       _id: `temp_${Date.now()}_${currentUser._id}`,
       sender: currentUser._id,
       receiver: chatId,
-      content: newMessage.trim(),
+      content: content,
+      type: type,
       timestamp: new Date(),
       isRead: false,
       isTemp: true,
     }
 
-    // Add message instantly to UI
     setMessages((prev) => [...prev, tempMessage])
-    const messageContent = newMessage.trim()
-    setNewMessage("")
 
-    // Stop typing
-    socket.emit("stopTyping", {
-      senderId: currentUser._id,
-      receiverId: chatId,
-    })
+    if (socket && type === "text") {
+      socket.emit("stopTyping", {
+        senderId: currentUser._id,
+        receiverId: chatId,
+      })
+    }
 
     try {
       const token = localStorage.getItem("token")
@@ -225,34 +212,46 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
         body: JSON.stringify({
           sender: currentUser._id,
           receiver: chatId,
-          content: messageContent,
+          content: content,
+          type: type,
         }),
       })
 
       if (response.ok) {
         const data = await response.json()
 
-        // Only update if this is still the current chat
         if (currentChatRef.current === chatId) {
           setMessages((prev) => prev.map((msg) => (msg._id === tempMessage._id ? data.message : msg)))
         }
 
-        // Send to other user via socket
-        socket.emit("sendMessage", data.message)
+        if (socket) {
+          socket.emit("sendMessage", data.message)
+        }
       } else {
-        // Remove temp message on error (only if still current chat)
         if (currentChatRef.current === chatId) {
           setMessages((prev) => prev.filter((msg) => msg._id !== tempMessage._id))
-          setNewMessage(messageContent)
+          if (type === "text") setNewMessage(content)
         }
       }
     } catch (error) {
-      // Remove temp message on error (only if still current chat)
       if (currentChatRef.current === chatId) {
         setMessages((prev) => prev.filter((msg) => msg._id !== tempMessage._id))
-        setNewMessage(messageContent)
+        if (type === "text") setNewMessage(content)
       }
     }
+  }
+
+  const handleSendText = (e) => {
+    e.preventDefault()
+    if (!newMessage.trim() || !socket || !isConnected || !selectedUser) return
+
+    sendMessage(newMessage.trim(), "text")
+    setNewMessage("")
+  }
+
+  const handleSendDrawing = (drawingData) => {
+    sendMessage(drawingData, "drawing")
+    setShowDrawing(false)
   }
 
   const handleTyping = (e) => {
@@ -291,6 +290,72 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
       hour: "2-digit",
       minute: "2-digit",
     })
+  }
+
+  // Check if string is a valid base64 image
+  const isBase64Image = (str) => {
+    return (
+      typeof str === "string" &&
+      (str.startsWith("data:image/png;base64,") ||
+        str.startsWith("data:image/jpeg;base64,") ||
+        str.startsWith("data:image/jpg;base64,") ||
+        str.startsWith("data:image/gif;base64,"))
+    )
+  }
+
+  const renderMessage = (message) => {
+    // Handle drawing or base64 image messages
+    if (message.type === "drawing" || isBase64Image(message.content)) {
+      return (
+        <div className="max-w-[75%] md:max-w-xs lg:max-w-md">
+          <img
+            src={message.content || "/placeholder.svg"}
+            alt="Drawing"
+            className="rounded-lg max-w-full h-auto border"
+            style={{ maxHeight: "300px" }}
+          />
+          <div className="flex items-center justify-between mt-1">
+            <p className={`text-xs ${message.sender === currentUser._id ? "text-blue-100" : "text-gray-500"}`}>
+              {formatTime(message.timestamp)}
+            </p>
+            {message.sender === currentUser._id && !message.isTemp && (
+              <div className="ml-2">
+                {message.isRead ? (
+                  <CheckCheck className="h-3 w-3 text-blue-200" />
+                ) : (
+                  <Check className="h-3 w-3 text-blue-200" />
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )
+    }
+
+    // Handle text messages
+    return (
+      <div
+        className={`max-w-[75%] md:max-w-xs lg:max-w-md px-3 py-2 md:px-4 md:py-2 rounded-lg ${
+          message.sender === currentUser._id ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-900"
+        } ${message.isTemp ? "opacity-70" : ""}`}
+      >
+        <p className="text-sm break-words">{message.content}</p>
+        <div className="flex items-center justify-between mt-1">
+          <p className={`text-xs ${message.sender === currentUser._id ? "text-blue-100" : "text-gray-500"}`}>
+            {formatTime(message.timestamp)}
+          </p>
+          {message.sender === currentUser._id && !message.isTemp && (
+            <div className="ml-2">
+              {message.isRead ? (
+                <CheckCheck className="h-3 w-3 text-blue-200" />
+              ) : (
+                <Check className="h-3 w-3 text-blue-200" />
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    )
   }
 
   if (!selectedUser) return null
@@ -339,29 +404,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
                   key={message._id}
                   className={`flex ${message.sender === currentUser._id ? "justify-end" : "justify-start"}`}
                 >
-                  <div
-                    className={`max-w-[75%] md:max-w-xs lg:max-w-md px-3 py-2 md:px-4 md:py-2 rounded-lg ${
-                      message.sender === currentUser._id ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-900"
-                    } ${message.isTemp ? "opacity-70" : ""}`}
-                  >
-                    <p className="text-sm break-words">{message.content}</p>
-                    <div className="flex items-center justify-between mt-1">
-                      <p
-                        className={`text-xs ${message.sender === currentUser._id ? "text-blue-100" : "text-gray-500"}`}
-                      >
-                        {formatTime(message.timestamp)}
-                      </p>
-                      {message.sender === currentUser._id && !message.isTemp && (
-                        <div className="ml-2">
-                          {message.isRead ? (
-                            <CheckCheck className="h-3 w-3 text-blue-200" />
-                          ) : (
-                            <Check className="h-3 w-3 text-blue-200" />
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  {renderMessage(message)}
                 </div>
               ))
             )}
@@ -372,7 +415,15 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
       {/* Input */}
       <div className="bg-white border-t border-gray-200 p-3 md:p-4">
-        <form onSubmit={sendMessage} className="flex space-x-2">
+        <form onSubmit={handleSendText} className="flex space-x-2">
+          <button
+            type="button"
+            onClick={() => setShowDrawing(true)}
+            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full"
+            title="Open Drawing Canvas"
+          >
+            <Palette className="h-5 w-5" />
+          </button>
           <input
             type="text"
             value={newMessage}
@@ -390,6 +441,8 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
           </button>
         </form>
       </div>
+
+      {showDrawing && <DrawingCanvas onSendDrawing={handleSendDrawing} onClose={() => setShowDrawing(false)} />}
     </div>
   )
 }
