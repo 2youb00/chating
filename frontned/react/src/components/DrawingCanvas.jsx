@@ -59,10 +59,22 @@ function DrawingCanvas({ onSendDrawing, onClose }) {
             <Palette className="h-5 w-5 mr-2" />
             Drawing Canvas
           </h3>
+          <div className="flex justify-between">
+          <button
+            onClick={handleDownload}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+          >
+            <Download className="h-4 w-4" />
+            Download
+          </button>
+
+         
+        </div>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full">
             <X className="h-5 w-5" />
           </button>
         </div>
+        
 
         {/* Tools */}
         <div className="flex flex-wrap items-center gap-4 mb-4 p-3 bg-gray-50 rounded-lg">
@@ -159,27 +171,16 @@ function DrawingCanvas({ onSendDrawing, onClose }) {
         </div>
 
         {/* Footer Actions */}
-        <div className="flex justify-between">
+        <div className="flex justify-end">
           <button
-            onClick={handleDownload}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
-          >
-            <Download className="h-4 w-4" />
-            Download
-          </button>
-
-          <div className="flex gap-2">
-            <button onClick={onClose} className="px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200">
-              Cancel
-            </button>
-            <button
               onClick={handleSave}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              className="flex items-end gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
             >
               <Send className="h-4 w-4" />
-              Send Drawing
+            
             </button>
-          </div>
+
+          
         </div>
       </div>
     </div>

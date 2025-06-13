@@ -18,114 +18,179 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
   const typingTimeoutRef = useRef(null)
   const currentChatRef = useRef(null)
   const socketInitialized = useRef(false)
+  const socketReconnectAttempts = useRef(0)
+  const maxReconnectAttempts = 5
 
-  // Initialize socket only once per component lifecycle
+  // Initialize socket connection with better reconnection handling
   useEffect(() => {
-    if (socketInitialized.current) return
+    const initializeSocket = () => {
+      if (socketInitialized.current) return
 
-    const token = localStorage.getItem("token")
-    if (!token) return
+      const token = localStorage.getItem("token")
+      if (!token) return
 
-    const newSocket = io("https://chating-kv0h.onrender.com", {
-      auth: { token },
-      transports: ["websocket", "polling"],
-      forceNew: true,
-    })
+      console.log("Initializing socket connection...")
 
-    newSocket.on("connect", () => {
-      setIsConnected(true)
-      newSocket.emit("join", currentUser._id)
-    })
+      const newSocket = io("https://chating-kv0h.onrender.com", {
+        auth: { token },
+        transports: ["websocket", "polling"],
+        forceNew: true,
+        reconnection: true,
+        reconnectionAttempts: maxReconnectAttempts,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        timeout: 20000,
+      })
 
-    newSocket.on("disconnect", () => {
-      setIsConnected(false)
-    })
+      newSocket.on("connect", () => {
+        console.log("Socket connected successfully")
+        setIsConnected(true)
+        socketReconnectAttempts.current = 0
+        newSocket.emit("join", currentUser._id)
 
-    newSocket.on("newMessage", (message) => {
-      const currentChat = currentChatRef.current
-      if (
-        currentChat &&
-        currentChat === selectedUser?._id &&
-        ((message.sender === currentChat && message.receiver === currentUser._id) ||
-          (message.sender === currentUser._id && message.receiver === currentChat))
-      ) {
-        setMessages((prev) => {
-          const exists = prev.some((msg) => msg._id === message._id)
-          if (exists) return prev
-          return [...prev, message]
-        })
+        // Request online users immediately after connection
+        newSocket.emit("getOnlineUsers")
+      })
 
-        if (message.sender === currentChat) {
-          markMessageAsRead(message._id, message.sender)
+      newSocket.on("disconnect", () => {
+        console.log("Socket disconnected")
+        setIsConnected(false)
+      })
+
+      newSocket.on("connect_error", (error) => {
+        console.error("Socket connection error:", error)
+        socketReconnectAttempts.current += 1
+
+        if (socketReconnectAttempts.current >= maxReconnectAttempts) {
+          console.error("Max reconnection attempts reached")
+          newSocket.close()
+          socketInitialized.current = false
         }
-      }
-    })
+      })
 
-    newSocket.on("messageRead", (data) => {
-      const currentChat = currentChatRef.current
-      if (currentChat && currentChat === selectedUser?._id) {
-        setMessages((prev) =>
-          prev.map((msg) => (msg._id === data.messageId ? { ...msg, isRead: true, readBy: data.readBy } : msg)),
-        )
-      }
-    })
+      newSocket.on("newMessage", (message) => {
+        console.log("New message received:", message)
+        const currentChat = currentChatRef.current
 
-    newSocket.on("userTyping", (data) => {
-      const currentChat = currentChatRef.current
-      if (data.userId === currentChat && currentChat === selectedUser?._id) {
-        setIsTyping(data.isTyping)
-      }
-    })
+        if (
+          currentChat &&
+          ((message.sender === currentChat && message.receiver === currentUser._id) ||
+            (message.sender === currentUser._id && message.receiver === currentChat))
+        ) {
+          setMessages((prev) => {
+            // Prevent duplicate messages by checking ID
+            const exists = prev.some((msg) => msg._id === message._id)
+            if (exists) return prev
+            return [...prev, message]
+          })
 
-    newSocket.on("userOnline", (userId) => {
-      if (userId === selectedUser?._id) {
-        setUserOnlineStatus(true)
-        onUserStatusChange?.(userId, true)
-      }
-    })
+          // Mark message as read immediately if it's from the current chat partner
+          if (message.sender === currentChat) {
+            markMessageAsRead(message._id, message.sender)
+          }
+        }
+      })
 
-    newSocket.on("userOffline", (userId) => {
-      if (userId === selectedUser?._id) {
-        setUserOnlineStatus(false)
-        setIsTyping(false)
-        onUserStatusChange?.(userId, false)
-      }
-    })
+      newSocket.on("messageRead", (data) => {
+        console.log("Message read event:", data)
+        const currentChat = currentChatRef.current
 
-    newSocket.on("onlineUsers", (userIds) => {
-      if (selectedUser?._id) {
-        const isOnline = userIds.includes(selectedUser._id)
-        setUserOnlineStatus(isOnline)
-        onUserStatusChange?.(selectedUser._id, isOnline)
-      }
-    })
+        if (currentChat) {
+          setMessages((prev) =>
+            prev.map((msg) => (msg._id === data.messageId ? { ...msg, isRead: true, readBy: data.readBy } : msg)),
+          )
+        }
+      })
 
-    setSocket(newSocket)
-    socketInitialized.current = true
+      newSocket.on("userTyping", (data) => {
+        const currentChat = currentChatRef.current
+        if (data.userId === currentChat) {
+          setIsTyping(data.isTyping)
+        }
+      })
 
+      newSocket.on("userOnline", (userId) => {
+        console.log("User online:", userId)
+        if (userId === selectedUser?._id) {
+          setUserOnlineStatus(true)
+          onUserStatusChange?.(userId, true)
+        }
+      })
+
+      newSocket.on("userOffline", (userId) => {
+        console.log("User offline:", userId)
+        if (userId === selectedUser?._id) {
+          setUserOnlineStatus(false)
+          setIsTyping(false)
+          onUserStatusChange?.(userId, false)
+        }
+      })
+
+      newSocket.on("onlineUsers", (userIds) => {
+        console.log("Online users:", userIds)
+        if (selectedUser?._id) {
+          const isOnline = userIds.includes(selectedUser._id)
+          setUserOnlineStatus(isOnline)
+          onUserStatusChange?.(selectedUser._id, isOnline)
+        }
+      })
+
+      setSocket(newSocket)
+      socketInitialized.current = true
+
+      return newSocket
+    }
+
+    const newSocket = initializeSocket()
+
+    // Cleanup function
     return () => {
+      if (newSocket) {
+        console.log("Cleaning up socket connection")
+        newSocket.close()
+      }
       socketInitialized.current = false
-      newSocket.close()
     }
-  }, [currentUser._id])
+  }, [currentUser._id, selectedUser?._id])
 
+  // Handle chat switching with improved state management
   useEffect(() => {
-    if (selectedUser) {
-      setMessages([])
-      setIsTyping(false)
-      setIsLoading(true)
-      currentChatRef.current = selectedUser._id
-      setUserOnlineStatus(selectedUser.isOnline || false)
-      fetchMessages()
-    }
-  }, [selectedUser])
+    if (!selectedUser) return
 
+    console.log("Selected user changed:", selectedUser._id)
+
+    // Clear previous chat state
+    setMessages([])
+    setIsTyping(false)
+    setIsLoading(true)
+
+    // Update current chat reference
+    currentChatRef.current = selectedUser._id
+    setUserOnlineStatus(selectedUser.isOnline || false)
+
+    // Fetch messages for new chat
+    fetchMessages()
+
+    // Notify server about chat change
+    if (socket && isConnected) {
+      socket.emit("joinChat", {
+        userId: currentUser._id,
+        chatPartnerId: selectedUser._id,
+      })
+    }
+  }, [selectedUser?._id, isConnected])
+
+  // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
 
+  // Improved message read marking with retry mechanism
   const markMessageAsRead = async (messageId, senderId) => {
-    if (socket && currentChatRef.current === selectedUser._id) {
+    console.log("Marking message as read:", messageId)
+
+    // Emit socket event first for immediate UI update
+    if (socket && isConnected && currentChatRef.current === selectedUser?._id) {
       socket.emit("messageRead", {
         messageId: messageId,
         senderId: senderId,
@@ -133,22 +198,37 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
       })
     }
 
-    try {
-      const token = localStorage.getItem("token")
-      await fetch(`https://chating-kv0h.onrender.com/api/messages/${messageId}/read`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${token}` },
-      })
-    } catch (error) {
-      // Silent error handling
+    // Then update server via API (with retry)
+    const updateServer = async (retries = 3) => {
+      try {
+        const token = localStorage.getItem("token")
+        const response = await fetch(`https://chating-kv0h.onrender.com/api/messages/${messageId}/read`, {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}` },
+        })
+
+        if (!response.ok && retries > 0) {
+          console.log(`Read receipt API failed, retrying... (${retries} attempts left)`)
+          setTimeout(() => updateServer(retries - 1), 1000)
+        }
+      } catch (error) {
+        if (retries > 0) {
+          console.log(`Read receipt API error, retrying... (${retries} attempts left)`)
+          setTimeout(() => updateServer(retries - 1), 1000)
+        }
+      }
     }
+
+    updateServer()
   }
 
+  // Improved message fetching with better error handling
   const fetchMessages = async () => {
     if (!selectedUser) return
 
     setIsLoading(true)
     const chatId = selectedUser._id
+    console.log("Fetching messages for chat:", chatId)
 
     try {
       const token = localStorage.getItem("token")
@@ -158,18 +238,28 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
       if (response.ok) {
         const data = await response.json()
+
+        // Only update if this is still the current chat
         if (currentChatRef.current === chatId) {
+          console.log(`Received ${data.messages.length} messages`)
           setMessages(data.messages)
 
-          data.messages.forEach((message) => {
-            if (message.sender === chatId && !message.isRead) {
-              markMessageAsRead(message._id, message.sender)
+          // Mark unread messages as read with a slight delay to ensure UI is ready
+          setTimeout(() => {
+            if (currentChatRef.current === chatId) {
+              data.messages.forEach((message) => {
+                if (message.sender === chatId && !message.isRead) {
+                  markMessageAsRead(message._id, message.sender)
+                }
+              })
             }
-          })
+          }, 300)
         }
+      } else {
+        console.error("Failed to fetch messages:", response.status)
       }
     } catch (error) {
-      // Silent error handling
+      console.error("Error fetching messages:", error)
     } finally {
       if (currentChatRef.current === chatId) {
         setIsLoading(false)
@@ -177,8 +267,9 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
     }
   }
 
+  // Enhanced message sending with better error handling
   const sendMessage = async (content, type = "text") => {
-    if (!selectedUser) return
+    if (!selectedUser || !isConnected) return
 
     const chatId = selectedUser._id
     const tempMessage = {
@@ -192,6 +283,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
       isTemp: true,
     }
 
+    // Add message instantly to UI
     setMessages((prev) => [...prev, tempMessage])
 
     if (socket && type === "text") {
@@ -219,22 +311,29 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
       if (response.ok) {
         const data = await response.json()
+        console.log("Message sent successfully:", data.message)
 
         if (currentChatRef.current === chatId) {
+          // Replace temp message with real one
           setMessages((prev) => prev.map((msg) => (msg._id === tempMessage._id ? data.message : msg)))
         }
 
+        // Emit socket event to notify recipient
         if (socket) {
           socket.emit("sendMessage", data.message)
         }
       } else {
+        console.error("Failed to send message:", response.status)
         if (currentChatRef.current === chatId) {
+          // Remove temp message on error
           setMessages((prev) => prev.filter((msg) => msg._id !== tempMessage._id))
           if (type === "text") setNewMessage(content)
         }
       }
     } catch (error) {
+      console.error("Error sending message:", error)
       if (currentChatRef.current === chatId) {
+        // Remove temp message on error
         setMessages((prev) => prev.filter((msg) => msg._id !== tempMessage._id))
         if (type === "text") setNewMessage(content)
       }
@@ -243,7 +342,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
 
   const handleSendText = (e) => {
     e.preventDefault()
-    if (!newMessage.trim() || !socket || !isConnected || !selectedUser) return
+    if (!newMessage.trim() || !isConnected || !selectedUser) return
 
     sendMessage(newMessage.trim(), "text")
     setNewMessage("")
@@ -257,7 +356,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
   const handleTyping = (e) => {
     setNewMessage(e.target.value)
 
-    if (socket && e.target.value.trim() && selectedUser) {
+    if (socket && isConnected && e.target.value.trim() && selectedUser) {
       socket.emit("typing", {
         senderId: currentUser._id,
         receiverId: selectedUser._id,
@@ -268,11 +367,28 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
       }
 
       typingTimeoutRef.current = setTimeout(() => {
-        socket.emit("stopTyping", {
-          senderId: currentUser._id,
-          receiverId: selectedUser._id,
-        })
+        if (socket && isConnected) {
+          socket.emit("stopTyping", {
+            senderId: currentUser._id,
+            receiverId: selectedUser._id,
+          })
+        }
       }, 2000)
+    }
+  }
+
+  // Force refresh messages and connection status
+  const handleRefreshChat = () => {
+    if (selectedUser) {
+      fetchMessages()
+
+      if (socket && isConnected) {
+        socket.emit("getOnlineUsers")
+      } else if (!isConnected) {
+        // Try to reconnect socket
+        socketInitialized.current = false
+        socketReconnectAttempts.current = 0
+      }
     }
   }
 
@@ -313,6 +429,10 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
             alt="Drawing"
             className="rounded-lg max-w-full h-auto border"
             style={{ maxHeight: "300px" }}
+            onLoad={() => {
+              // Ensure scroll to bottom after image loads
+              messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+            }}
           />
           <div className="flex items-center justify-between mt-1">
             <p className={`text-xs ${message.sender === currentUser._id ? "text-blue-100" : "text-gray-500"}`}>
@@ -382,7 +502,27 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
               </p>
             </div>
           </div>
-          <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"}`}></div>
+          <div className="flex items-center gap-2">
+            <button onClick={handleRefreshChat} className="p-1 hover:bg-gray-100 rounded-full" title="Refresh chat">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M21 2v6h-6"></path>
+                <path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path>
+                <path d="M3 22v-6h6"></path>
+                <path d="M21 12a9 9 0 0 1-15 6.7L3 16"></path>
+              </svg>
+            </button>
+            <div className={`w-2 h-2 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"}`}></div>
+          </div>
         </div>
       </div>
 
@@ -421,6 +561,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
             onClick={() => setShowDrawing(true)}
             className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full"
             title="Open Drawing Canvas"
+            disabled={!isConnected}
           >
             <Palette className="h-5 w-5" />
           </button>
@@ -428,7 +569,7 @@ function ChatWindow({ currentUser, selectedUser, onUserStatusChange }) {
             type="text"
             value={newMessage}
             onChange={handleTyping}
-            placeholder={`Message ${selectedUser.name}...`}
+            placeholder={isConnected ? `Message ${selectedUser.name}...` : "Connecting..."}
             className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             disabled={!isConnected}
           />
