@@ -65,10 +65,21 @@ function DrawingCanvas({ onSendDrawing, onClose }) {
             className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
           >
             <Download className="h-4 w-4" />
-            Download
           </button>
+         
 
          
+        </div>
+        <div className="flex justify-end">
+          <button
+              onClick={handleSave}
+              className="flex items-end gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              <Send className="h-4 w-4" />
+        
+            </button>
+
+          
         </div>
           <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full">
             <X className="h-5 w-5" />
@@ -172,14 +183,7 @@ function DrawingCanvas({ onSendDrawing, onClose }) {
 
         {/* Footer Actions */}
         <div className="flex justify-end">
-          <button
-              onClick={handleSave}
-              className="flex items-end gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-            >
-              <Send className="h-4 w-4" />
-            
-            </button>
-
+       
           
         </div>
       </div>
