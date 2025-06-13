@@ -113,7 +113,7 @@ function DrawingCanvas({ onSendDrawing, onClose }) {
             <span className="text-sm w-6">{brushRadius}</span>
           </div>
 
-          {/* Eraser */}
+          {/* Eraserc */}
           <button
             onClick={() => setIsErasing(!isErasing)}
             className={`flex items-center gap-2 px-3 py-2 rounded ${
